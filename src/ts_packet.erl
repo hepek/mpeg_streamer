@@ -4,6 +4,7 @@
 %%% ts_packet decodes mpeg-ts packets
 %%% @end
 %%% Created : 27 Dec 2013 by  <milan@epikur>
+%%% Note: 
 
 -module(ts_packet).
 -compile(export_all).
