@@ -1,0 +1,103 @@
+%%% @author Milan Markovic  <zivotinja@gmail.com>
+%%% @copyright (C) 2013, 
+%%% @doc
+%%% This module prints ts stream info
+%%% @end
+%%% Created : 27 Dec 2013 by  <milan@epikur>
+
+-module(stream_info).
+-compile(export_all).
+-author('zivotinja@gmail.com').
+-import(ts_packet, 
+	[get_PID/1, get_payload/1, decode_PAT/1, decode_PMT/1, decode_data/1]).
+
+-include("../include/mpegts.hrl").
+
+filter(PID, Packets) ->
+    lists:filter(fun (Packet) -> get_PID(Packet) =:= PID end, Packets).
+			  
+
+file_info(FileName) ->
+    {ok, File} = file:open(FileName,  [binary, read]),
+    {ok, Data} = file:read(File, 1024*?TSLEN),
+    file:close(File),
+    Packets = decode_data(Data),
+    P = filter(0, Packets),
+    {pat, _, Progs} = decode_PAT(get_payload(hd(P))),
+    lists:map(fun (Prog) -> prog_info(Prog, Packets) end, Progs).
+
+prog_info({ProgNum, PID}, Packets) ->
+    %io:format("~s:~p~n", ["Program", ProgNum]),
+    P = filter(PID, Packets),
+    {pmt, _, PCRPID, Streams} = decode_PMT(get_payload(hd(P))),
+    %io:format(" PCR: ~p~n", [PCRPID]),
+    {program, ProgNum, PCRPID, lists:map(fun stream_info/1, Streams)}.
+
+stream_info({Stype, PID, _ESL, Desc}) ->
+    {PID, stype2str(Stype), ex_desc(Desc)}.
+    
+
+ex_desc(<<>>) ->
+    <<"">>;
+ex_desc(<<T, L, Desc:L/binary>>) ->
+    {desc_type(T), Desc}.
+
+desc_type(1)  -> reserved;		
+desc_type(2)  -> video_stream_descriptor;
+desc_type(3)  -> audio_stream_descriptor;
+desc_type(4)  -> hierarchy_descriptor;
+desc_type(5)  -> registration_descriptor;
+desc_type(6)  -> data_stream_alignment_descriptor;
+desc_type(7)  -> target_background_grid_descriptor;
+desc_type(8)  -> video_window_descriptor;
+desc_type(9)  -> 'CA_descriptor';
+desc_type(10) -> 'ISO_639_language_descriptor';
+desc_type(11) -> system_clock_descriptor;
+desc_type(12) -> multiplex_buffer_utilization_descriptor;
+desc_type(13) -> copyright_descriptor;
+desc_type(14) -> maximum_bitrate_descriptor;
+desc_type(15) -> private_data_indicator_descriptor;
+desc_type(16) -> smoothing_buffer_descriptor;
+desc_type(17) -> 'STD_descriptor';
+desc_type(18) -> 'IBP_descriptor';
+desc_type(27) -> 'MPEG-4_video_descriptor';
+desc_type(28) -> 'MPEG-4_audio_descriptor';
+desc_type(29) -> 'IOD_descriptor';
+desc_type(30) -> 'SL_descriptor';
+desc_type(31) -> 'FMC_descriptor';
+desc_type(32) -> 'External_ES_ID_descriptor';
+desc_type(33) -> 'MuxCode_descriptor';
+desc_type(34) -> 'FmxBufferSize_descriptor';
+desc_type(35) -> 'MultiplexBuffer_descriptor';
+desc_type(36) -> 'FlexMuxTiming_descriptor';
+desc_type(D) when((D =< 19) and (D >= 63)) -> 'reserved';
+desc_type(_) -> 'user_private'.
+    
+
+stype2str(1)   -> "ISO/IEC 11172 Video (MPEG-1)";
+stype2str(2)   -> "ITU-T Rec. H.262 | ISO/IEC 13818-2 (MPEG-2) Video or ISO/IEC 11172-2 (MPEG-1) constrained parameter video stream";
+stype2str(3)   -> "ISO/IEC 11172 Audio (MPEG-1) NOT USED by ATSC";
+stype2str(4)   -> "ISO/IEC 13818-3 Audio (MPEG-2) NOT USED by ATSC";
+stype2str(5)   -> "MPEG-2 private table sections";
+stype2str(6)   -> "MPEG-2 Packetized Elementary Stream packets containing private data";
+stype2str(7)   -> "MHEG Packets";
+stype2str(8)   -> "MPEG-2 Annex A DSM CC";
+stype2str(9)   -> "ITU-T Rec. H.222.1";
+stype2str(10)  -> "ISO/IEC 13818-6 type A";
+stype2str(11)  -> "ISO/IEC 13818-6 type B";
+stype2str(12)  -> "ISO/IEC 13818-6 type C";
+stype2str(13)  -> "ISO/IEC 13818-6 type D";
+stype2str(14)  -> "ISO/IEC 13818-1 (MPEG-2) auxiliary";
+stype2str(15)  -> "ISO/IEC 13818-7 Audio with ADTS transport syntax";
+stype2str(16)  -> "ISO/IEC 14496-2 (MPEG-4) Visual";
+stype2str(17)  -> "ISO/IEC 14496-3 Audio with the LATM transport syntax as defined in ISO/IEC 14496-3 / AMD 1";
+stype2str(18)  -> "ISO/IEC 14496-1 SL-packetized stream or FlexMux stream carried in PES packets";
+stype2str(19)  -> "ISO/IEC 14496-1 SL-packetized stream or FlexMux stream carried in ISO/IEC14496_sections";
+stype2str(20)  -> "ISO/IEC 13818-6 Synchronized Download Protocol";
+stype2str(21)  -> "Metadata carried in PES packets";
+stype2str(22)  -> "Metadata carried in metadata_sections";
+stype2str(129) -> "ATSC AC-3 Audio";
+stype2str(_)   -> "MPEG-2 User Private".
+
+
+    

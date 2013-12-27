@@ -1,0 +1,13 @@
+-define(SYNCB, 16#47).
+-define(TSLEN, 188).
+
+
+-define(TS_b, <<?SYNCB:8, TEI:1, PUSI:1, TP:1, PID:13
+		, SC:2, AD:2, CC:4
+		, Payload:(?TSLEN-4)/binary>>).
+
+-define(TS_t, {ts
+	       , {pid, PID}
+	       , {TEI, PUSI, TP, SC, CC}
+	       , {ad, AD}
+	       , {payload, Payload}}).
