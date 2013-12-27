@@ -23,13 +23,36 @@ file_info(FileName, NumPackets) ->
     {ok, File} = file:open(FileName,  [binary, read]),
     {ok, Data} = file:read(File, NumPackets*?TSLEN),
     file:close(File),
-    info(Data).
-
-%udp_info(Host, Port) ->
-
-
-info(Data) ->
     Packets = decode_data(Data),
+    info(Packets).
+
+udp_info(Bcast, Port) ->
+    udp_info(Bcast, Port, 1024).
+
+udp_info(Bcast, Port, NumPackets) ->
+    {ok, S} = gen_udp:open(Port, [{active, false}, binary]),
+    case Bcast of
+	{A, B, C, D} -> 
+	    inet:setopts(S, [{add_membership, {{A,B,C,D}, {0,0,0,0}}}])
+    end,
+    Data = receive_udp(S, NumPackets*?TSLEN),
+    gen_udp:close(S),
+    Packets = lists:flatmap(fun ts_packet:decode_data/1, Data),
+    info(Packets).
+
+receive_udp(_, More) when (More =< 0) ->
+    [];
+receive_udp(Sock, More) ->
+    {ok, {_, _, Data}} = gen_udp:recv(Sock, 0, 2000),
+    [Data | receive_udp(Sock, More-byte_size(Data))].
+
+prog_pcr(Info) ->
+    prog_pcr(Info, 1).
+prog_pcr(Info, Program) ->
+    {program, _, PCR, _} = lists:nth(Program, Info),
+    PCR.
+
+info(Packets) ->
     P = filter(0, Packets),
     {pat, _, Progs} = decode_PAT(get_payload(hd(P))),
     lists:map(fun (Prog) -> prog_info(Prog, Packets) end, Progs).
