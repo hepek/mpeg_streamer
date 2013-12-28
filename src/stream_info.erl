@@ -56,7 +56,7 @@ prog_pcr(Info, Program) ->
 info(Packets) ->
     P = filter(0, Packets),
     {pat, _, Progs} = decode_PAT(get_payload(hd(P))),
-    lists:map(fun (Prog) -> prog_info(Prog, Packets) end, Progs).
+    [prog_info(Prog, Packets) || Prog <- Progs].
 
 prog_info({ProgNum, PID}, Packets) ->
     P = filter(PID, Packets),
