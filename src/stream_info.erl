@@ -36,6 +36,7 @@ udp_info(Bcast, Port, NumPackets) ->
 	    inet:setopts(S, [{add_membership, {{A,B,C,D}, {0,0,0,0}}}])
     end,
     Data = receive_udp(S, NumPackets*?TSLEN),
+    %inet:setopts(S, [{drop_membership, {{A,B,C,D}, {0,0,0,0}}}])
     gen_udp:close(S),
     Packets = lists:flatmap(fun ts_packet:decode_data/1, Data),
     info(Packets).
