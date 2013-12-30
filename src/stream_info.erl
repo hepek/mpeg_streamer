@@ -9,12 +9,12 @@
 -compile(export_all).
 -author('zivotinja@gmail.com').
 -import(ts_packet,
-	[get_PID/1, get_payload/1, decode_PAT/1, decode_PMT/1, decode_data/1]).
+	[decode_PAT/1, decode_PMT/1, decode_data/1]).
 
 -include("../include/mpegts.hrl").
 
 filter(PID, Packets) ->
-    lists:filter(fun (Packet) -> get_PID(Packet) =:= PID end, Packets).
+    lists:filter(fun (Packet) -> Packet#ts.pid =:= PID end, Packets).
 
 file_info(FileName) ->
     file_info(FileName, 1024).
@@ -55,12 +55,14 @@ prog_pcr(Info, Program) ->
 
 info(Packets) ->
     P = filter(0, Packets),
-    {pat, _, Progs} = decode_PAT(get_payload(hd(P))),
+    TS1 = hd(P),
+    {pat, _, Progs} = decode_PAT(TS1#ts.payload),
     [prog_info(Prog, Packets) || Prog <- Progs].
 
 prog_info({ProgNum, PID}, Packets) ->
     P = filter(PID, Packets),
-    {pmt, _, PCRPID, Streams} = decode_PMT(get_payload(hd(P))),
+    TS1 = hd(P),
+    {pmt, _, PCRPID, Streams} = decode_PMT(TS1#ts.payload),
     {program, ProgNum, PCRPID, lists:map(fun stream_info/1, Streams)}.
 
 stream_info({Stype, PID, _ESL, Desc}) ->

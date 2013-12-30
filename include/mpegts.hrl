@@ -7,7 +7,9 @@
 		, Payload:(?TSLEN-4)/binary>>).
 
 -define(TS_t, {ts
-	       , {pid, PID}
+	       , PID
 	       , {TEI, PUSI, TP, SC, CC}
-	       , {ad, AD}
-	       , {payload, Payload}}).
+	       , AD
+	       , Payload}).
+
+-record(ts, {pid=0, flags, ad, payload}).
