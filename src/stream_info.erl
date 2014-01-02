@@ -14,7 +14,7 @@
 -include("../include/mpegts.hrl").
 
 filter(PID, Packets) ->
-    lists:filter(fun (Packet) -> Packet#ts.pid =:= PID end, Packets).
+    lists:filter(fun (P) -> P#ts.pid =:= PID end, Packets).
 
 file_info(FileName) ->
     file_info(FileName, 1024).
@@ -62,12 +62,11 @@ info(Packets) ->
 prog_info({ProgNum, PID}, Packets) ->
     P = filter(PID, Packets),
     TS1 = hd(P),
-    {pmt, _, PCRPID, Streams} = decode_PMT(TS1#ts.payload),
+    {pmt, _, PCRPID, Streams}  = decode_PMT(TS1#ts.payload),
     {program, ProgNum, PCRPID, lists:map(fun stream_info/1, Streams)}.
 
 stream_info({Stype, PID, _ESL, Desc}) ->
     {PID, stype2str(Stype), ex_desc(Desc)}.
-
 
 ex_desc(<<>>) ->
     <<"">>;

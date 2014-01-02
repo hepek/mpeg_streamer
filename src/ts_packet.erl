@@ -12,17 +12,44 @@
 
 -include("../include/mpegts.hrl").
 
-decode_data(BinData) when(byte_size(BinData) >= ?TSLEN) ->
+-spec decode_data(binary()) -> [#ts{}].
+-spec decode(binary()) -> #ts{}  | junk | too_few_bytes.
+-spec dec(binary()) -> tuple() | junk | too_few_bytes.
+
+
+%% Decodes all incoming data skipping all bad packets or junk
+%% returns only what could be decoded
+decode_data(<<>>)    -> [];
+decode_data(BinData) ->
     <<Packet:?TSLEN/binary, Rest/binary>> = BinData,
-    [decode(Packet) | decode_data(Rest)];
-decode_data(_) ->
-    [].
+    case decode(Packet) of
+	TS = #ts{}	-> [TS | decode_data(Rest)];
+	junk		-> decode_data(resync(BinData, 0, 100*?TSLEN));
+	too_few_bytes	-> []
+    end.
+
+resync(_Data, Max, Max) -> error({sync_byte_not_found, Max});
+resync(<<>>, _, _)      -> <<>>;
+resync(Data, Counter, Max) ->
+    io:format("junk on input, resynchronizing stream~n"),
+    <<_Skip:8, Data2/binary>> = Data,
+    <<Syn:8, _/binary>> = Data2,
+    case Syn of
+	?SYNCB -> Data2;
+	_ -> resync(Data2, Counter+1, Max)
+    end.
+
 
 decode(BinData) when byte_size(BinData) == ?TSLEN ->
-    unpack_ad(dec(BinData));
-decode(BinData) -> error({unexpected, {size, byte_size(BinData)}}).
+    case dec(BinData) of
+	junk -> junk;
+	Result -> unpack_ad(Result)
+    end;
+decode(_BinData) -> 
+    too_few_bytes.
 
-dec(?TS_b) -> ?TS_t.
+dec(?TS_b) -> ?TS_t;
+dec(_) -> junk.
 
 %% Unpacks adaptation field (two step TS decoding)
 unpack_ad({ts, _PID, _FLAGS, 0, _Payload})       -> %
@@ -94,9 +121,11 @@ decode_PMT(<<0:8, 2:8, _SS:1, 0:1, _:2, 0:2, Len:10,
      [{Stype, EPID, ESL, Desc} ||
 	 <<Stype:8, _:3, EPID:13, _:4, 0:2, ESL:10, Desc:ESL/binary>> <= Progs]}.
 
+get_PCR(Data) ->
+    <<PCR:33/integer-big, _Pad:6, _Ex:9, Rest/binary>> = Data,
+    {PCR, Rest}.
 
-decode_ad(<<Len:8/integer,
-	    Discont:1,
+decode_ad(<<Discont:1,
 	    RandAcc:1,
 	    Priority:1,
 	    PCRFlag:1,
@@ -104,37 +133,35 @@ decode_ad(<<Len:8/integer,
 	    Splice:1,
 	    TPData:1,
 	    AdaptFieldExtension:1,
-	    Rem/binary>>) ->
-    if (Len < 2) -> throw(zeroPacketLength);
-       true ->
-	    L = Len-1,
-	    <<Rest:L/binary, _DontCare/binary>> = Rem,
-	    Flags = {Discont, RandAcc, Priority,
-		     PCRFlag, OPCRFlag, Splice,
-		     TPData, AdaptFieldExtension},
-	    case {PCRFlag, OPCRFlag} of
-		{1,1} ->
-		    <<PCR:33/integer-big, _Pad:6, _Ex:9,
-		      OPCR:33/integer-big, _OPad:6, _OEx:9,
-		      SpliceCountdown:8/integer, _Stuffing/binary>> = Rest,
-		    {adaptation, Flags,
-		     {pcr, PCR}, {opcr, OPCR}, SpliceCountdown};
-		{0,0} ->
-		    <<SpliceCountdown:8/integer, _Stuffing/binary>> = Rest,
-		    {adaptation, Flags,
-		     {pcr, none}, {opcr, none}, SpliceCountdown};
-		{1,0} ->
-		    <<PCR:33/integer-big, _Pad:6, _Ex:9,
-		      SpliceCountdown:8/integer, _Stuffing/binary>> = Rest,
-		    {adaptation, Flags,
-		     {pcr, PCR}, {opcr, none}, SpliceCountdown};
-		{0,1} ->
-		    <<OPCR:33/integer-big, _OPad:6, _OEx:9,
-		      SpliceCountdown:8/integer, _Stuffing/binary>> = Rest,
-		    {adaptation, Flags,
-		     {pcr, none}, {opcr, OPCR}, SpliceCountdown}
-	    end
-    end.
+	    Rest/binary>>) ->    
+    Flags = {Discont, RandAcc, Priority,
+	     PCRFlag, OPCRFlag, Splice,
+	     TPData, AdaptFieldExtension},
+    {PCR, OPCR, AfterPCR} =
+	case {PCRFlag, OPCRFlag} of
+	    {1,1} ->
+		{PCR0, Rest2} = get_PCR(Rest),
+		{OPCR0, Rest3} = get_PCR(Rest2),
+		{PCR0, OPCR0, Rest3};
+	    {0,0} ->
+		{undefined, undefined, Rest};
+	    {1,0} ->
+		{PCR0, Rest2} = get_PCR(Rest),
+		{PCR0, undefined, Rest2};
+	    {0,1} ->
+		{OPCR0, Rest2} = get_PCR(Rest),
+		{undefined, OPCR0, Rest2}
+	end,
+
+    SpliceCountdown =
+	case Splice of
+	    1 -> <<SpliceC0:8, _/binary>> = AfterPCR,
+		 SpliceC0;
+	    _ -> undefined
+	end,
+	
+    #ad{flags = Flags, pcr = PCR, opcr = OPCR, 
+	splice_countdown = SpliceCountdown}.
 
 
 

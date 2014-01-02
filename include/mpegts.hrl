@@ -12,4 +12,14 @@
 	       , AD
 	       , Payload}).
 
--record(ts, {pid=0, flags, ad, payload}).
+-record(ts, {pid=0 :: integer()
+	     , flags
+	     , ad :: binary() | undefined
+	     , payload :: binary() | undefined
+	    }).
+
+-record(ad, {flags
+	     , pcr :: integer()
+	     , opcr :: integer()
+	     , splice_countdown :: integer
+	    }).
