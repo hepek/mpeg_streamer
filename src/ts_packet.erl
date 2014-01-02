@@ -15,7 +15,7 @@
 -spec decode_data(binary()) -> [#ts{}].
 -spec decode(binary()) -> #ts{}  | junk | too_few_bytes.
 -spec dec(binary()) -> tuple() | junk | too_few_bytes.
-
+-spec enc(tuple()) -> binary().
 
 %% Decodes all incoming data skipping all bad packets or junk
 %% returns only what could be decoded
@@ -23,9 +23,9 @@ decode_data(<<>>)    -> [];
 decode_data(BinData) ->
     <<Packet:?TSLEN/binary, Rest/binary>> = BinData,
     case decode(Packet) of
-	TS = #ts{}	-> [TS | decode_data(Rest)];
 	junk		-> decode_data(resync(BinData, 0, 100*?TSLEN));
-	too_few_bytes	-> []
+	too_few_bytes	-> [];
+	TS = #ts{}	-> [TS | decode_data(Rest)]
     end.
 
 resync(_Data, Max, Max) -> error({sync_byte_not_found, Max});
@@ -52,11 +52,11 @@ dec(?TS_b) -> ?TS_t;
 dec(_) -> junk.
 
 %% Unpacks adaptation field (two step TS decoding)
-unpack_ad({ts, _PID, _FLAGS, 0, _Payload})       -> %
+unpack_ad({ts_t, _PID, _FLAGS, 0, _Payload})       -> %
     error(wrong_adaptation_flag);
-unpack_ad({ts, PID, FLAGS, 1, Payload})          ->
+unpack_ad({ts_t, PID, FLAGS, 1, Payload})          ->
     #ts{pid=PID, flags=FLAGS, payload=Payload};
-unpack_ad({ts, PID, FLAGS, AD, Data}) ->    
+unpack_ad({ts_t, PID, FLAGS, AD, Data}) ->    
     <<AdLen:8/unsigned, Rest/binary>> = Data,
     AdSize = AdLen,
     <<Adaptation:(AdSize)/binary, Payload/binary>> = Rest,
@@ -70,27 +70,25 @@ encode(Ts) ->
     enc(pack_ad(Ts)).
 
 enc(?TS_t) when byte_size(Payload) == 184 -> ?TS_b;
-enc({ts, _P, _F, _A, Payload}) ->
+enc({ts_t, _P, _F, _A, Payload}) ->
     error({unexpected, {size, byte_size(Payload)}});
 enc(_)     -> error(unexpected).
 
 
 pack_ad(P = #ts{ad=undefined})  ->
-    {ts, P#ts.pid, P#ts.flags, {ad, 1}, P#ts.payload};
-%{ts, PID, FLAGS, {ad, 1}, Payload};
+    {ts_t, P#ts.pid, P#ts.flags, {ad, 1}, P#ts.payload};
 pack_ad(P = #ts{payload=undefined}) ->
-%{ts, PID, FLAGS, {ad, Adaptation}, {payload, none}})    ->
     Adaptation = P#ts.ad,
     AdLen = byte_size(Adaptation),
     Len = ?TSLEN-4-AdLen-1,
     Pad = << <<255/unsigned>> || _ <- lists:seq(1,Len) >>,
-    {ts, P#ts.pid, P#ts.flags, 2,
+    {ts_t, P#ts.pid, P#ts.flags, 2,
       <<AdLen:8/unsigned, Adaptation/binary, Pad/binary>>};
 pack_ad(P = #ts{}) ->    
     Adaptation = P#ts.ad,
     AdLen = byte_size(Adaptation),
     Payload = P#ts.payload,
-    {ts, P#ts.pid, P#ts.flags, 3,
+    {ts_t, P#ts.pid, P#ts.flags, 3,
       <<AdLen:8/unsigned, Adaptation/binary, Payload/binary>>}.
 
 decode_PAT(<<_PF:8, 0:8, 1:1, 0:1, 2#11:2, 0:2

@@ -6,7 +6,7 @@
 		, SC:2, AD:2, CC:4
 		, Payload:(?TSLEN-4)/binary>>).
 
--define(TS_t, {ts
+-define(TS_t, {ts_t
 	       , PID
 	       , {TEI, PUSI, TP, SC, CC}
 	       , AD
