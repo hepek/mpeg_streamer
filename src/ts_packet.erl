@@ -68,7 +68,6 @@ unpack_ad({ts_t, PID, FLAGS, AD, Data}) ->
     end.
 
 encode(Ts) ->
-    io:format("~p~n", [Ts]),
     enc(pack_ad(Ts)).
 
 enc(?TS_t) -> 
