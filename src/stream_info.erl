@@ -13,33 +13,41 @@
 
 -include("../include/mpegts.hrl").
 
+info(URI) ->
+    info(URI, 1024).
+
+info(URI, NumPackets) ->
+    case uri_utils:parse(URI) of
+	{udp_addr, _, _} ->
+	    udp_info(URI, NumPackets);
+	{file_name, _} ->
+	    file_info(URI, NumPackets);
+	A -> A
+    end.
+	   
+
 filter(PID, Packets) ->
     lists:filter(fun (P) -> P#ts.pid =:= PID end, Packets).
 
-file_info(FileName) ->
-    file_info(FileName, 1024).
+file_info(URI) ->
+    file_info(URI, 1024).
 
-file_info(FileName, NumPackets) ->
-    {ok, File} = file:open(FileName,  [binary, read]),
+file_info(URI, NumPackets) ->
+    {file, File} = uri_utils:open(URI),
     {ok, Data} = file:read(File, NumPackets*?TSLEN),
     file:close(File),
     Packets = decode_data(Data),
-    info(Packets).
+    packets_info(Packets).
 
-udp_info(Bcast, Port) ->
-    udp_info(Bcast, Port, 1024).
+udp_info(URI) ->
+    udp_info(URI, 1024).
 
-udp_info(Bcast, Port, NumPackets) ->
-    {ok, S} = gen_udp:open(Port, [{active, false}, binary]),
-    case Bcast of
-	{A, B, C, D} -> 
-	    inet:setopts(S, [{add_membership, {{A,B,C,D}, {0,0,0,0}}}])
-    end,
+udp_info(URI, NumPackets) ->
+    {udp, S} = uri_utils:open(URI),
     Data = receive_udp(S, NumPackets*?TSLEN),
-    %inet:setopts(S, [{drop_membership, {{A,B,C,D}, {0,0,0,0}}}])
     gen_udp:close(S),
     Packets = lists:flatmap(fun ts_packet:decode_data/1, Data),
-    info(Packets).
+    packets_info(Packets).
 
 receive_udp(_, More) when (More =< 0) ->
     [];
@@ -53,7 +61,7 @@ prog_pcr(Info, Program) ->
     {program, _, PCR, _} = lists:nth(Program, Info),
     PCR.
 
-info(Packets) ->
+packets_info(Packets) ->
     P = filter(0, Packets),
     TS1 = hd(P),
     {pat, _, Progs} = decode_PAT(TS1#ts.payload),
