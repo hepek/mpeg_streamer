@@ -19,7 +19,7 @@
 	    }).
 
 -record(ad, {flags
-	     , pcr :: integer()
+	     , pcr  :: integer()
 	     , opcr :: integer()
-	     , splice_countdown :: integer
+	     , splice_countdown :: integer()
 	    }).

@@ -16,6 +16,7 @@
 -spec decode(binary()) -> #ts{}  | junk | too_few_bytes.
 -spec dec(binary()) -> tuple() | junk | too_few_bytes.
 -spec enc(tuple()) -> binary().
+-spec decode_ad(binary()) -> #ad{}.
 
 %% Decodes all incoming data skipping all bad packets or junk
 %% returns only what could be decoded
@@ -63,42 +64,46 @@ unpack_ad({ts_t, PID, FLAGS, AD, Data}) ->
     case AD of
 	2 -> #ts{pid=PID, flags=FLAGS, ad=Adaptation};
 	3 -> #ts{pid=PID, flags=FLAGS, ad=Adaptation, payload=Payload};
-	_    -> error(wrong_adaptation)
+	_ -> error(wrong_adaptation)
     end.
 
 encode(Ts) ->
+    io:format("~p~n", [Ts]),
     enc(pack_ad(Ts)).
 
-enc(?TS_t) when byte_size(Payload) == 184 -> ?TS_b;
-enc({ts_t, _P, _F, _A, Payload}) ->
-    error({unexpected, {size, byte_size(Payload)}});
+enc(?TS_t) -> 
+    ?TS_b;
 enc(_)     -> error(unexpected).
 
 
+padding(Data) ->
+    PLen = byte_size(Data),
+    Len = ?TSLEN-4-PLen,
+    iolist_to_binary([Data, << <<255>> || _ <- lists:seq(1,Len) >>]).
+
 pack_ad(P = #ts{ad=undefined})  ->
-    {ts_t, P#ts.pid, P#ts.flags, {ad, 1}, P#ts.payload};
+    D = padding(P#ts.payload),
+    {ts_t, P#ts.pid, P#ts.flags, 1, D};
 pack_ad(P = #ts{payload=undefined}) ->
     Adaptation = P#ts.ad,
     AdLen = byte_size(Adaptation),
-    Len = ?TSLEN-4-AdLen-1,
-    Pad = << <<255/unsigned>> || _ <- lists:seq(1,Len) >>,
-    {ts_t, P#ts.pid, P#ts.flags, 2,
-      <<AdLen:8/unsigned, Adaptation/binary, Pad/binary>>};
+    D = padding(<<AdLen:8/unsigned, Adaptation/binary>>),
+    {ts_t, P#ts.pid, P#ts.flags, 2, D};
 pack_ad(P = #ts{}) ->    
     Adaptation = P#ts.ad,
     AdLen = byte_size(Adaptation),
     Payload = P#ts.payload,
-    {ts_t, P#ts.pid, P#ts.flags, 3,
-      <<AdLen:8/unsigned, Adaptation/binary, Payload/binary>>}.
+    D = padding(<<AdLen:8, Adaptation/binary, Payload/binary>>),
+    {ts_t, P#ts.pid, P#ts.flags, 3, D}.
 
-decode_PAT(<<_PF:8, 0:8, 1:1, 0:1, 2#11:2, 0:2
-	    , SectionLength:10
-	    , _TransportStreamId:16
-	    , 2#11:2
-	    , VersionNo:5
-	    , CurrNext:1
-	    , SectionNo:8, LastSectionNo:8
-	    , Rest/binary>>) ->
+decode_PAT(<<_PF:8, 0:8, 1:1, 0:1, 2#11:2, 0:2,
+	     SectionLength:10,
+	     _TransportStreamId:16,
+	     2#11:2,
+	     VersionNo:5,
+	     CurrNext:1,
+	     SectionNo:8, LastSectionNo:8,
+	     Rest/binary>>) ->
     ProgLen = SectionLength-9,
     <<Data:ProgLen/binary,
       _CRC:32, %TODO: check CRC
@@ -110,18 +115,27 @@ decode_PMT(<<0:8, 2:8, _SS:1, 0:1, _:2, 0:2, Len:10,
 	    Rest:Len/binary, _/binary>>) ->
     SL = Len-4,
     <<Strip:SL/binary, _CRC32:32/big-integer>> = Rest,
-    <<ProgramNum:16
-      , _:2, _Ver:5
-      , _CN:1, 0:8, 0:8, _:3
-      , PCRPID:13, _:4, 0:2, PIL:10, _PI:PIL/binary
-      , Progs/binary>> = Strip,
+    <<ProgramNum:16,
+      _:2, _Ver:5,
+      _CN:1, 0:8, 0:8, _:3,
+      PCRPID:13, _:4, 0:2, PIL:10, _PI:PIL/binary,
+      Progs/binary>> = Strip,
     {pmt, ProgramNum, PCRPID,
      [{Stype, EPID, ESL, Desc} ||
 	 <<Stype:8, _:3, EPID:13, _:4, 0:2, ESL:10, Desc:ESL/binary>> <= Progs]}.
 
-get_PCR(Data) ->
-    <<PCR:33/integer-big, _Pad:6, _Ex:9, Rest/binary>> = Data,
-    {PCR, Rest}.
+get_PCR(Data, 1) ->
+    <<PCR:33/integer-big, _Pad:6, _Ex:9, Rest/binary>> = Data,	    
+    {PCR, Rest};
+get_PCR(Data, 0) ->
+    {undefined, Data}.
+
+get_Splice(_Data, 0) ->
+    undefined;
+get_Splice(Data, 1) ->
+    <<SpliceC0:8, _/binary>> = Data,
+    SpliceC0.
+
 
 decode_ad(<<Discont:1,
 	    RandAcc:1,
@@ -132,55 +146,14 @@ decode_ad(<<Discont:1,
 	    TPData:1,
 	    AdaptFieldExtension:1,
 	    Rest/binary>>) ->    
+
     Flags = {Discont, RandAcc, Priority,
 	     PCRFlag, OPCRFlag, Splice,
 	     TPData, AdaptFieldExtension},
-    {PCR, OPCR, AfterPCR} =
-	case {PCRFlag, OPCRFlag} of
-	    {1,1} ->
-		{PCR0, Rest2} = get_PCR(Rest),
-		{OPCR0, Rest3} = get_PCR(Rest2),
-		{PCR0, OPCR0, Rest3};
-	    {0,0} ->
-		{undefined, undefined, Rest};
-	    {1,0} ->
-		{PCR0, Rest2} = get_PCR(Rest),
-		{PCR0, undefined, Rest2};
-	    {0,1} ->
-		{OPCR0, Rest2} = get_PCR(Rest),
-		{undefined, OPCR0, Rest2}
-	end,
 
-    SpliceCountdown =
-	case Splice of
-	    1 -> <<SpliceC0:8, _/binary>> = AfterPCR,
-		 SpliceC0;
-	    _ -> undefined
-	end,
-	
+    {PCR, Rest1}    = get_PCR(Rest, PCRFlag),
+    {OPCR, Rest2}   = get_PCR(Rest1, OPCRFlag),
+    SpliceCountdown = get_Splice(Rest2, Splice),
+
     #ad{flags = Flags, pcr = PCR, opcr = OPCR, 
 	splice_countdown = SpliceCountdown}.
-
-
-
-%% Note: does not work 
-lshift(<<B:1, Rest/bitstring>>) ->
-    {B, <<Rest/bitstring, 0:1>>}.
-
-crc32h(<<>>, CrcReg) -> 
-    CrcReg;
-crc32h(<<D:1, Data/bitstring>>, CrcReg) ->
-    {Out, <<New:32>>} = lshift(<<CrcReg:32>>),
-    io:format("~p, ~p~n", [Out, New]),
-    if (D =/= Out) ->
-	    crc32h(Data, New);
-       true ->
-	    crc32h(Data, New bxor 16#04c11db7)
-    end.
-
-crc32(Data) ->
-    crc32h(Data, 16#FFFFFFFF) bxor 16#FFFFFFFF.
-    
-
-%% DD1 = <<0,0,176,13,0,1,193,0,0,0,1,224,80,66,119,52,166>>.
-%% P = <<16#04c11db7:32>>.
