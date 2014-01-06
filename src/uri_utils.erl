@@ -8,7 +8,9 @@ parse(URI) ->
 	{ok, {file, _, _, _, FName, _}} ->
 	    {file_name, FName};
 	{ok, {udp, _, Host, Port, _, _}} ->
-	    {udp_addr, Host, Port};
+	    {ok, H} = inet:gethostbyname(Host),
+	    Addr = hd(H#hostent.h_addr_list),
+	    {udp_addr, Addr, Port};
 	E -> {error, E}
 	       
     end.
@@ -16,8 +18,19 @@ parse(URI) ->
 scheme_def() ->
      [{scheme_defaults, [{file,0} | http_uri:scheme_defaults()]}].
 
-open(Addr, Port) ->    
-    gen_udp:open(Port, get_opts(Addr)).
+open(URI, sender) -> 
+    case parse(URI) of
+	{file_name, FName} ->
+	    case file:open(FName, [binary, read]) of		
+		{ok, File} -> {file, File};
+		_ -> exit({error, no_such_file, FName})
+	    end;
+	{udp_addr, Addr, _Port} ->
+	    Opts = get_opts(Addr),
+	    {ok, Sock} = gen_udp:open(0, Opts),
+	    {udp, Sock};
+	_ -> {error, cannot_parse_uri, URI}
+    end.
 
 open(URI) -> 
     case parse(URI) of
@@ -26,9 +39,7 @@ open(URI) ->
 		{ok, File} -> {file, File};
 		_ -> exit({error, no_such_file, FName})
 	    end;
-	{udp_addr, Host, Port} ->
-	    {ok, H} = inet:gethostbyname(Host),
-	    Addr = hd(H#hostent.h_addr_list),
+	{udp_addr, Addr, Port} ->
 	    Opts = get_opts(Addr),
 	    {ok, Sock} = gen_udp:open(Port, Opts),
 	    {udp, Sock};
