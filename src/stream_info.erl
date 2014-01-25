@@ -44,16 +44,21 @@ udp_info(URI) ->
 
 udp_info(URI, NumPackets) ->
     {udp, S} = uri_utils:open(URI),
-    Data = receive_udp(S, NumPackets*?TSLEN),
+    D = receive_udp(S, NumPackets*?TSLEN),
     gen_udp:close(S),
+    {ok, Data} = D,
     Packets = lists:flatmap(fun ts_packet:decode_data/1, Data),
     packets_info(Packets).
 
 receive_udp(_, More) when (More =< 0) ->
-    [];
+    {ok, []};
 receive_udp(Sock, More) ->
-    {ok, {_, _, Data}} = gen_udp:recv(Sock, 0, 2000),
-    [Data | receive_udp(Sock, More-byte_size(Data))].
+    case gen_udp:recv(Sock, 0, 2000) of	
+	{ok, {_, _, Data}} ->
+	    {ok, [Data | receive_udp(Sock, More-byte_size(Data))]};
+	{error, Reason} ->
+	    {error, Reason}
+    end.
 
 prog_pcr(Info) ->
     prog_pcr(Info, 1).
@@ -79,7 +84,10 @@ stream_info({Stype, PID, _ESL, Desc}) ->
 ex_desc(<<>>) ->
     <<"">>;
 ex_desc(<<T, L, Desc:L/binary>>) ->
-    {desc_type(T), Desc}.
+    {desc_type(T), Desc};
+ex_desc(D) ->
+    {raw, D}.
+
 
 desc_type(1)  -> reserved;
 desc_type(2)  -> video_stream_descriptor;
