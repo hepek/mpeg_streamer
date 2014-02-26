@@ -60,13 +60,17 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call({info, Source}, _From, State) ->
+handle_call({info, Source}, _From, State) ->   
     case (catch stream_info:info(Source)) of
-	{'EXIT', {Reason, _CallStack}} -> 
+	{'EXIT', Reason} -> 
+	    io:format("~w~n", [Reason]),
 	    {reply, {error, Reason}, State};
 	Info                -> 
 	    {reply, Info, State}
     end.
+%handle_call({start, Source, Destination}, _From, State) ->
+%    mpeg_streamer:
+%end.
 
 %%--------------------------------------------------------------------
 %% @private
