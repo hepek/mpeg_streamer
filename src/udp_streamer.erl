@@ -8,7 +8,7 @@
 
 -module(udp_streamer).
 %-compile(export_all).
--export([start_link/2, stop/1, init/3]).
+-export([start_link/3, stop/1, init/3]).
 
 -include("../include/mpegts.hrl").
 
@@ -26,8 +26,8 @@
 -define(CHUNKSZ, 7*?TSLEN).
 -define(TIMEOUT, 5000).
 
-start_link(Src, Dst) ->
-    spawn_link(?MODULE, init, [self(), Src, Dst]).
+start_link(ReportTo, Src, Dst) ->
+    spawn_link(?MODULE, init, [ReportTo, Src, Dst]).
 
 stop(Pid) ->
     Pid ! {self(), stop},
@@ -41,10 +41,10 @@ stop(Pid) ->
 	    {ok, Reason}
     end.
 
-init(Master, SrcUri, DstUri) ->
+init(ReportTo, SrcUri, DstUri) ->
     Src = get_src(SrcUri),
     Dst = get_dst(DstUri),
-    loop(#state{src=Src, dst=Dst, tprev=now(), ping_pid=Master}).
+    loop(#state{src=Src, dst=Dst, tprev=now(), ping_pid=ReportTo}).
 
 sleep2(T) when (T >= 0) ->
     timer:sleep(T);

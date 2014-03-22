@@ -19,7 +19,7 @@
 
 -define(SERVER, ?MODULE). 
 
--record(state, {streams=[]}).
+-record(state, {streamers=[]}).
 
 %%%===================================================================
 %%% API
