@@ -67,19 +67,61 @@ prog_pcr(Info, Program) ->
     PCR.
 
 packets_info(Packets) ->
-    P = filter(0, Packets),
-    TS1 = hd(P),
-    {pat, _, Progs} = decode_PAT(TS1#ts.payload),
-    [prog_info(Prog, Packets) || Prog <- Progs].
+    case filter(0, Packets) of
+	[] -> {error, no_PID_0_found};
+	P -> 
+	    TS1 = hd(P),
+	    {pat, _, Progs} = decode_PAT(TS1#ts.payload),
+	    [prog_info(Prog, Packets) || Prog <- Progs]
+    end.
 
 prog_info({ProgNum, PID}, Packets) ->
+    StreamInfo = 
+	fun ({2, PID2, _ESL, Desc}) ->
+		Pckts = filter(PID2, Packets),
+		%{PID2, sets:to_list(sets:from_list([mpeg2info(P#ts.payload) || P <- Pckts])), ex_desc(Desc)};
+		P = hd(Pckts),
+		{PID2, mpeg2info(P#ts.payload)};
+	    ({Stype, PID2, _ESL, Desc}) ->
+		{PID2, stype2str(Stype), ex_desc(Desc)} end,
     P = filter(PID, Packets),
     TS1 = hd(P),
     {pmt, _, PCRPID, Streams}  = decode_PMT(TS1#ts.payload),
-    {program, ProgNum, PCRPID, lists:map(fun stream_info/1, Streams)}.
+    {program, ProgNum, PCRPID, lists:map(StreamInfo, Streams)}.
 
-stream_info({Stype, PID, _ESL, Desc}) ->
-    {PID, stype2str(Stype), ex_desc(Desc)}.
+
+mpeg2info(Data) ->
+    case binary:match(Data, <<0,0,1,16#b3>>) of
+	{Fro, _} ->
+	   <<W:12/big-integer, H:12/big-integer, AS:4, FR:4, BR:18/big-integer, 1:1, _/bitstring>> = 
+		binary:part(Data, {Fro+4, 11}),
+	    %{W, H, aspect(A), framerate(FP), BR*400/1024/1024};
+	    lists:flatten(io_lib:format("mpeg2_video ~px~p ~s ~p Mbps ~p fps", 
+					[W, H, aspect(AS), BR*400/1000/1000, framerate(FR)]));
+	nomatch ->
+	    mpeg2_video
+    end.
+    
+%mpeg2info(Data) ->
+%    mpeg2_video.
+
+
+
+aspect(1) -> "1:1";
+aspect(2) -> "4:3";
+aspect(3) -> "16:9";
+aspect(4) -> "2.21:1";
+aspect(_) -> "unknown".
+
+framerate(1) -> 23.976;
+framerate(2) -> 24;
+framerate(3) -> 25;
+framerate(4) -> 29.97;
+framerate(5) -> 30;
+framerate(6) -> 50;
+framerate(7) -> 59.94;
+framerate(8) -> 60;
+framerate(_) -> 0.
 
 ex_desc(<<>>) ->
     <<"">>;
