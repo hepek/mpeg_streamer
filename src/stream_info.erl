@@ -78,10 +78,11 @@ packets_info(Packets) ->
 prog_info({ProgNum, PID}, Packets) ->
     StreamInfo = 
 	fun ({2, PID2, _ESL, Desc}) ->
-		Pckts = filter(PID2, Packets),
-		%{PID2, sets:to_list(sets:from_list([mpeg2info(P#ts.payload) || P <- Pckts])), ex_desc(Desc)};
-		P = hd(Pckts),
+		P = hd(filter(PID2, Packets)),
 		{PID2, mpeg2info(P#ts.payload)};
+	    ({27, PID2, _ESL, Desc}) ->
+		P = hd(filter(PID2, Packets)),
+		{PID2, h264info(P#ts.payload)};
 	    ({Stype, PID2, _ESL, Desc}) ->
 		{PID2, stype2str(Stype), ex_desc(Desc)} end,
     P = filter(PID, Packets),
@@ -90,6 +91,8 @@ prog_info({ProgNum, PID}, Packets) ->
     {program, ProgNum, PCRPID, lists:map(StreamInfo, Streams)}.
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% mpeg2info
 mpeg2info(Data) ->
     case binary:match(Data, <<0,0,1,16#b3>>) of
 	{Fro, _} ->
@@ -101,11 +104,6 @@ mpeg2info(Data) ->
 	nomatch ->
 	    mpeg2_video
     end.
-    
-%mpeg2info(Data) ->
-%    mpeg2_video.
-
-
 
 aspect(1) -> "1:1";
 aspect(2) -> "4:3";
@@ -122,6 +120,78 @@ framerate(6) -> 50;
 framerate(7) -> 59.94;
 framerate(8) -> 60;
 framerate(_) -> 0.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% h264 info
+
+h264info(Data) ->    
+    case binary:match(Data, <<0,0,1,16#67>>) of
+	{Fro, _} ->
+	    SPSData = binary:part(Data, {Fro+4, 32}),
+	    SPS = parseSPS(SPSData),
+	    {value, {pic_width_in_mbs_minus_1, W}} =
+		lists:keysearch(pic_width_in_mbs_minus_1, 1, SPS),
+	    {value, {pic_height_in_map_minus_1, H}} =
+		lists:keysearch(pic_height_in_map_minus_1, 1, SPS),
+	    {value, {max_num_ref_frames, MNUMREF}} = 
+		lists:keysearch(max_num_ref_frames, 1, SPS),
+	    lists:flatten(io_lib:format("h264_video ~wx~w mnum_ref ~w", [(W+1)*16, (H+1)*16, MNUMREF]));
+	nomatch ->
+	    h264_video
+    end.
+
+eg1(<<0:12, N:13/big-integer, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:11, N:12/big-integer, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:10, N:11/big-integer, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:9,  N:10/big-integer, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:8,  N:9/big-integer,  Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:7,  N:8, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:6,  N:7, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:5,  N:6, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:4,  N:5, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:3,  N:4, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:2,  N:3, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<0:1,  N:2, Rest/bitstring>>) -> {N-1, Rest};
+eg1(<<1:1, Rest/bitstring>>) ->       {0, Rest}.
+
+egN(<<>>, _) -> 
+    [<<>>];
+egN(Data, 0) ->
+    [Data];
+egN(Data, N) ->
+    {D, Rest} = eg1(Data),
+    [D | egN(Rest, N-1)].
+
+
+%% source http://stackoverflow.com/questions/6394874/fetching-the-dimensions-of-a-h264video-stream
+parseSPS(Data) ->
+    <<PROFILE_IDC:8, CS0:1, CS1:1, CS2:1, CS3:1, CS4:1, 0:3, LEVEL_IDC:8, Rest/bitstring>> = Data,
+    [SEQ_PARAM_SET_ID,
+     LOG2_MAX_FRAME_NUM_MINUS4,
+     PIC_ORDER_CNT_TYPE, %% =:= 0
+     LOG2_MAX_PIC_ORDER_CNT_LSB_MINUS4,
+     MAX_NUM_REF_FRAMES,
+     Rest1] = egN(Rest, 5),    
+    <<Gaps:1, Rest2/bitstring>> = Rest1,
+    [PIC_WIDTH_IN_MBS_MINUS_1,
+     PIC_HEIGHT_IN_MAP_MINUS_1,
+     Rest3] = egN(Rest2, 2),
+    <<FRAME_MBS_ONLY:1, DIRECT_8x8_INFERENCE:1, FRAME_CROPPING:1, Rest4/bitstring>> = Rest3, %% all =:= 0    
+    [{profile_idc, PROFILE_IDC},
+     {level_idc, LEVEL_IDC},
+     {seq_param_set_id, SEQ_PARAM_SET_ID},
+     {pic_order_cnt_type, PIC_ORDER_CNT_TYPE},
+     {log2_max_pic_ORDER_CNT_LSB_MINUS4,  LOG2_MAX_PIC_ORDER_CNT_LSB_MINUS4},
+     {max_num_ref_frames, MAX_NUM_REF_FRAMES},
+     {gaps, Gaps},
+     {pic_width_in_mbs_minus_1, PIC_WIDTH_IN_MBS_MINUS_1}, 
+     {pic_height_in_map_minus_1, PIC_HEIGHT_IN_MAP_MINUS_1},
+     {frame_mbs_only, FRAME_MBS_ONLY},
+     {direct_8x8_inference, DIRECT_8x8_INFERENCE}, 
+     {frame_cropping, FRAME_CROPPING}].
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 ex_desc(<<>>) ->
     <<"">>;
@@ -185,6 +255,7 @@ stype2str(18)  -> 'ISO/IEC 14496-1 SL-packetized stream or FlexMux stream carrie
 stype2str(19)  -> 'ISO/IEC 14496-1 SL-packetized stream or FlexMux stream carried in ISO/IEC14496_sections';
 stype2str(20)  -> 'ISO/IEC 13818-6 Synchronized Download Protocol';
 stype2str(21)  -> metadata_in_pes;			%"Metadata carried in PES packets";
-stype2str(22)  -> metadata_in_metadata_sections;	%"Metadata carried in metadata_sections";
+stype2str(22)  -> metadata_in_metadata_sections;	%"Metadata carried in metadata_sections"
+stype2str(27)  -> h264_video;
 stype2str(129) -> atsc_AC3_audio;			%"ATSC AC-3 Audio";
-stype2str(_)   -> mpeg2_user_private.			%"MPEG-2 User Private".
+stype2str(_)   -> mpeg2_user_private.
