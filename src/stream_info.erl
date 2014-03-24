@@ -77,10 +77,10 @@ packets_info(Packets) ->
 
 prog_info({ProgNum, PID}, Packets) ->
     StreamInfo = 
-	fun ({2, PID2, _ESL, Desc}) ->
+	fun ({2, PID2, _ESL, _Desc}) ->
 		P = hd(filter(PID2, Packets)),
 		{PID2, mpeg2info(P#ts.payload)};
-	    ({27, PID2, _ESL, Desc}) ->
+	    ({27, PID2, _ESL, _Desc}) ->
 		P = hd(filter(PID2, Packets)),
 		{PID2, h264info(P#ts.payload)};
 	    ({Stype, PID2, _ESL, Desc}) ->
@@ -128,15 +128,8 @@ framerate(_) -> 0.
 h264info(Data) ->    
     case binary:match(Data, <<0,0,1,16#67>>) of
 	{Fro, _} ->
-	    SPSData = binary:part(Data, {Fro+4, 32}),
-	    SPS = parseSPS(SPSData),
-	    {value, {pic_width_in_mbs_minus_1, W}} =
-		lists:keysearch(pic_width_in_mbs_minus_1, 1, SPS),
-	    {value, {pic_height_in_map_minus_1, H}} =
-		lists:keysearch(pic_height_in_map_minus_1, 1, SPS),
-	    {value, {max_num_ref_frames, MNUMREF}} = 
-		lists:keysearch(max_num_ref_frames, 1, SPS),
-	    lists:flatten(io_lib:format("h264_video ~wx~w mnum_ref ~w", [(W+1)*16, (H+1)*16, MNUMREF]));
+	    SPSData = binary:part(Data, {Fro+4, 120}),
+	    parseSPS(SPSData);
 	nomatch ->
 	    h264_video
     end.
@@ -164,20 +157,109 @@ egN(Data, N) ->
     [D | egN(Rest, N-1)].
 
 
+-record(sps, {profile_idc                  = 0,
+	      constraint_set0_flag         = 0,
+	      constraint_set1_flag         = 0,
+	      constraint_set2_flag         = 0,
+	      constraint_set3_flag         = 0,
+	      constraint_set4_flag         = 0,
+	      level_idc			   = 0,
+	      seq_param_set_id		   = 0,
+	      %% STUFF
+	      log2_max_frame_num_minus4	   = 0,
+	      pic_order_cnt_type	   = 0,
+	      log2_max_pic_order_cnt_lsb_minus4 = 0,
+	      max_num_ref_frames	   = 0,
+	      gaps_in_frame_num_value_allowed_flag = 0,
+	      pic_width_in_mbs_minus1	   = 0,
+	      pic_height_in_map_minus1	   = 0,
+	      frame_mbs_only_flag	   = 0,
+	      mb_adaptive_frame_field_flag = 0,
+	      direct_8x8_inference_flag	   = 0,
+	      frame_cropping_flag	   = 0,
+	      frame_crop_offsets	   = [],
+	      vui_parameters_present_flag  = 0,
+	      vui_parameters		   = []}).
+
+parseSPS(<<PROFILE_IDC:8, _CS0:1, _CS1:1, _CS2:1, _CS3:1, _CS4:1, 0:3, _LEVEL_IDC:8, _Rest/bitstring>>)
+  when PROFILE_IDC =:= 100; PROFILE_IDC =:= 110; PROFILE_IDC =:= 122; PROFILE_IDC =:= 244;
+       PROFILE_IDC =:= 44;  PROFILE_IDC =:= 83;	 PROFILE_IDC =:= 86;  PROFILE_IDC =:= 118 ->
+    error_cannot_parse;
+parseSPS(<<PROFILE_IDC:8, CS0:1, CS1:1, CS2:1, CS3:1, CS4:1, 0:3, LEVEL_IDC:8, Rest/bitstring>>) ->
+    [SEQ_PARAMETER_SET_ID,
+     Rest2] = egN(Rest, 1),
+    SPS0 = #sps{profile_idc          = PROFILE_IDC, 
+		constraint_set0_flag = CS0,
+		constraint_set1_flag = CS1,
+		constraint_set2_flag = CS2,
+		constraint_set3_flag = CS3,
+		constraint_set4_flag = CS4,
+		level_idc            = LEVEL_IDC, 
+		seq_param_set_id     = SEQ_PARAMETER_SET_ID},
+    sps1(SPS0, Rest2).	      
+
+sps1(SPS0, <<Data/bitstring>>) ->
+    [LOG2_MAX_FRAME_NUM_MINUS4,
+     PIC_ORDER_CNT_TYPE,
+     LOG2_MAX_PIC_ORDER_CNT_LSB_MINUS4,
+     MAX_NUM_REF_FRAMES, Rest] = egN(Data, 4),
+    <<Gaps:1, Rest2/bitstring>> = Rest,
+    io:format("~w~n",[Rest2]),
+    [PIC_WIDTH_IN_MBS_MINUS_1,
+     PIC_HEIGHT_IN_MAP_MINUS_1,
+     Rest3] = egN(Rest2, 2),
+    SPS1 = SPS0#sps{
+	     log2_max_frame_num_minus4     = LOG2_MAX_FRAME_NUM_MINUS4,
+	     pic_order_cnt_type            = PIC_ORDER_CNT_TYPE,
+	     log2_max_pic_order_cnt_lsb_minus4 = LOG2_MAX_PIC_ORDER_CNT_LSB_MINUS4,
+	     max_num_ref_frames		   = MAX_NUM_REF_FRAMES,	     
+	     gaps_in_frame_num_value_allowed_flag = Gaps,
+	     pic_width_in_mbs_minus1	   = PIC_WIDTH_IN_MBS_MINUS_1,
+	     pic_height_in_map_minus1      = PIC_HEIGHT_IN_MAP_MINUS_1},
+    case Rest3 of
+	<<0:1, MB_ADAPTIVE_FRAME_FIELD_FLAG:1, DIRECT_8x8_INFERENCE_FLAG:1, 1:1, Rest4/bitstring>> ->
+	    [LEFT, RIGHT, TOP, BOTTOM, _]  = egN(Rest4, 4),
+	    SPS1#sps{
+	      frame_mbs_only_flag          = 0,
+	      mb_adaptive_frame_field_flag = MB_ADAPTIVE_FRAME_FIELD_FLAG,
+	      direct_8x8_inference_flag	   = DIRECT_8x8_INFERENCE_FLAG,
+	      frame_cropping_flag          = 1,
+	      frame_crop_offsets           = [LEFT, RIGHT, TOP, BOTTOM]};
+	<<0:1, MB_ADAPTIVE_FRAME_FIELD_FLAG:1, DIRECT_8x8_INFERENCE_FLAG:1, 0:1, _Rest4/bitstring>> ->
+	    SPS1#sps{
+	      frame_mbs_only_flag          = 0,
+	      mb_adaptive_frame_field_flag = MB_ADAPTIVE_FRAME_FIELD_FLAG,
+	      direct_8x8_inference_flag	   = DIRECT_8x8_INFERENCE_FLAG,
+	      frame_cropping_flag          = 0};
+	<<1:1, DIRECT_8x8_INFERENCE_FLAG:1, 1:1, Rest4/bitstring>> ->
+	    [LEFT, RIGHT, TOP, BOTTOM, _]  = egN(Rest4, 4),
+	    SPS1#sps{
+	      frame_mbs_only_flag          = 1,
+	      direct_8x8_inference_flag    = DIRECT_8x8_INFERENCE_FLAG,
+	      frame_cropping_flag          = 1,
+	      frame_crop_offsets           = [LEFT, RIGHT, TOP, BOTTOM]};
+	<<1:1, DIRECT_8x8_INFERENCE_FLAG:1, 0:1, _Rest4/bitstring>> ->
+	    SPS1#sps{
+	      frame_mbs_only_flag          = 0,
+	      direct_8x8_inference_flag	   = DIRECT_8x8_INFERENCE_FLAG,
+	      frame_cropping_flag          = 0}
+	end.    
+
 %% source http://stackoverflow.com/questions/6394874/fetching-the-dimensions-of-a-h264video-stream
-parseSPS(Data) ->
-    <<PROFILE_IDC:8, CS0:1, CS1:1, CS2:1, CS3:1, CS4:1, 0:3, LEVEL_IDC:8, Rest/bitstring>> = Data,
+old_parseSPS(Data) ->
+    <<PROFILE_IDC:8, _CS0:1, _CS1:1, _CS2:1, _CS3:1, _CS4:1, 0:3, LEVEL_IDC:8, Rest/bitstring>> = Data,
     [SEQ_PARAM_SET_ID,
-     LOG2_MAX_FRAME_NUM_MINUS4,
+     _LOG2_MAX_FRAME_NUM_MINUS4,
      PIC_ORDER_CNT_TYPE, %% =:= 0
      LOG2_MAX_PIC_ORDER_CNT_LSB_MINUS4,
      MAX_NUM_REF_FRAMES,
      Rest1] = egN(Rest, 5),    
     <<Gaps:1, Rest2/bitstring>> = Rest1,
+    io:format("~w~n",[Rest2]),
     [PIC_WIDTH_IN_MBS_MINUS_1,
      PIC_HEIGHT_IN_MAP_MINUS_1,
      Rest3] = egN(Rest2, 2),
-    <<FRAME_MBS_ONLY:1, DIRECT_8x8_INFERENCE:1, FRAME_CROPPING:1, Rest4/bitstring>> = Rest3, %% all =:= 0    
+    <<FRAME_MBS_ONLY:1, DIRECT_8x8_INFERENCE:1, FRAME_CROPPING:1, _Rest4/bitstring>> = Rest3,    
     [{profile_idc, PROFILE_IDC},
      {level_idc, LEVEL_IDC},
      {seq_param_set_id, SEQ_PARAM_SET_ID},
