@@ -21,10 +21,11 @@
 %% Decodes all incoming data skipping all bad packets or junk
 %% returns only what could be decoded
 decode_data(<<>>)    -> [];
+decode_data(BinData) when byte_size(BinData) < ?TSLEN -> [];
 decode_data(BinData) ->
     <<Packet:?TSLEN/binary, Rest/binary>> = BinData,
     case decode(Packet) of
-	junk		-> decode_data(resync(BinData, 0, 100*?TSLEN));
+	junk		-> decode_data(resync(BinData, 0, 3*?TSLEN));
 	too_few_bytes	-> [];
 	TS = #ts{}	-> [TS | decode_data(Rest)]
     end.
@@ -43,7 +44,7 @@ resync(Data, Counter, Max) ->
 
 decode(BinData) when byte_size(BinData) == ?TSLEN ->
     case dec(BinData) of
-	junk -> junk;
+	junk   -> junk;
 	Result -> unpack_ad(Result)
     end;
 decode(_BinData) -> 
@@ -72,7 +73,8 @@ encode(Ts) ->
 
 enc(?TS_t) -> 
     ?TS_b;
-enc(_)     -> error(unexpected).
+enc(_)     -> 
+    error(unexpected).
 
 
 padding(Data) ->
@@ -134,7 +136,6 @@ get_Splice(_Data, 0) ->
 get_Splice(Data, 1) ->
     <<SpliceC0:8, _/binary>> = Data,
     SpliceC0.
-
 
 decode_ad(<<Discont:1,
 	    RandAcc:1,

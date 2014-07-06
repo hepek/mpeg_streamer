@@ -8,7 +8,7 @@
 
 -module(udp_streamer).
 %-compile(export_all).
--export([start_link/3, stop/1, init/3]).
+-export([start_link/3, stop/1, init/3, drop_interval/2]).
 
 -include("../include/mpegts.hrl").
 
@@ -21,7 +21,8 @@
 		pcr_last :: integer(),
 		tprev,
 	        ping_pid,
-	        pkt_count = 0}).
+	        pkt_count = 0,
+	        drop_interval = infinity}).
 
 -define(CHUNKSZ, 7*?TSLEN).
 -define(TIMEOUT, 5000).
@@ -41,16 +42,49 @@ stop(Pid) ->
 	    {ok, Reason}
     end.
 
+drop_interval(Pid, N) ->
+    Pid ! {self(), drop_interval, N},
+    Ref = monitor(process, Pid),
+
+    receive
+	{ok, N} ->
+	    demonitor(Ref, [flush]),
+	    {ok, normal};
+	{'DOWN', Ref, process, Pid, Reason} ->
+	    {ok, Reason}
+    end.
+
 init(ReportTo, SrcUri, DstUri) ->
     Src = get_src(SrcUri),
     Dst = get_dst(DstUri),
     loop(#state{src=Src, dst=Dst, tprev=now(), ping_pid=ReportTo}).
 
-sleep2(T) when (T >= 0) ->
-    timer:sleep(T);
-sleep2(T) ->
-    io:format("running late ~p~n", [T]),
+drop(_, infinity) ->
+    false;
+drop(Cnt, {sections, Interval, Count})
+  when (Cnt rem Interval) < Count ->
+    true;
+drop(Cnt, {drop_burst, Interval, Freq, Count}) 
+  when (Cnt rem Interval) < Count, (((Cnt - (Cnt rem Interval)) rem Freq) =:= 0) ->
+    true;
+drop(Cnt, Interval) when (Cnt rem Interval) =:= 0 ->
+    true;
+drop(_, _) ->
+    false.
+
+burst(Cnt, {burst, Interval, Count}) 
+    when ((Cnt rem Interval) < Count) ->
+    true;    
+burst(_, _) ->
+    false.
+
+sleep_burst(Cnt, {sleep, Ms, Interval}) 
+  when (Cnt rem Interval) =:= 0 ->
+    io:format("sleeping"),
+    timer:sleep(Ms);
+sleep_burst(_, _) ->
     ok.
+
 
 get_dst(DstUri) ->
     case uri_utils:parse(DstUri) of
@@ -78,6 +112,7 @@ getPCR([]) ->
 getPCR([H|T]) ->
     case H#ts.ad of
 	undefined -> getPCR(T);
+	<<>> -> none;
 	Data ->
 	    Ad = ts_packet:decode_ad(Data),
 	    case Ad#ad.pcr of
@@ -93,43 +128,63 @@ ping(Pid, Count, Interval)
 ping(_,_,_) ->
     ok.
 
+to_wait(T) when (T >= 0) ->
+    io:format("~p,", [T]),
+    T; %timer:sleep(T);
+to_wait(T) ->
+    io:format("running late ~p~n", [T]),
+    0.
 
 wait(none, Time, S) ->
-    S#state{tprev = Time};
+    {0, S#state{tprev = Time}};
 wait(PCR, Time, S = #state{tprev = _Tprev, pcr_last = undefined}) ->
-    S#state{tprev = Time, pcr_last = PCR};
+    {0, S#state{tprev = Time, pcr_last = PCR}};
 wait(PCR, Time, S = #state{tprev = Tprev, pcr_last = PCRlast}) ->
     Tdiff = timer:now_diff(Time, Tprev),
-    sleep2(((PCR-PCRlast) div 90) - (Tdiff div 1000)),
-    S#state{tprev = Time, pcr_last = PCR}.
+    ToWait = to_wait((PCR-PCRlast) div 90) - (Tdiff div 1000),
+    {ToWait, S#state{tprev = Time, pcr_last = PCR}}.
 
-dispatch(S, Packets) ->
-    {udp, Sock, Host, Port} = S#state.dst,
+send(Sock, Host, Port, Out) ->
+    case gen_udp:send(Sock, Host, Port, Out) of
+	ok -> ok;
+	{error, eagain} -> 
+	    io:format(":"),
+	    timer:sleep(100),
+	    send(Sock, Host, Port, Out)
+    end.
+
+dispatch(S, Packets) ->    
     PCR = getPCR(Packets),
-    S1  = wait(PCR, now(), S),
+    NPackets  = S#state.pkt_count,
+    sleep_burst(NPackets, DropBurst),
+    {Sleep, S1} = wait(PCR, now(), S),
     Out = [ts_packet:encode(P) || P <- Packets],
-    ok  = gen_udp:send(Sock, Host, Port, Out),
-    ping(S#state.ping_pid, S#state.pkt_count, 500),
-    S1#state{pkt_count = S#state.pkt_count + 1}.
+    timer:send_after(Sleep, {send, Out}),
+    ping(S#state.ping_pid, NPackets, 500),
+    S1#state{pkt_count = NPackets + 1}.
+
+handle_next_chunk(S, eof) ->
+    io:format("eof~n"),
+    {ok, _} = file:position(element(2,S#state.src), {bof, 0}),
+    S;
+handle_next_chunk(S, {ok, Data}) ->
+    Packets = ts_packet:decode_data(Data),
+    dispatch(S, Packets).
 
 loop(S) ->
     receive
+	{Pid, drop_interval, N} ->
+	    Pid ! {ok, N},
+	    loop(S#state{drop_interval = N});
 	{Pid, stop} ->
 	    %% todo: change to smth more general
 	    file:close(element(2, S#state.src)),
 	    gen_udp:close(element(2,S#state.dst)),
 	    io:format("closing~n"),
-	    Pid ! stop
-    after
-	0 -> case next_chunk(S#state.src) of
-		 eof ->
-		     io:format("eof~n"),
-		     {ok, _} = file:position(element(2,S#state.src), {bof, 0}),
-		     loop(S);
-		     %exit(normal);
-		 {ok, Data} ->
-		     Packets = ts_packet:decode_data(Data),
-		     S1 = dispatch(S, Packets),
-		     loop(S1)
-	     end
+	    Pid ! stop;
+	{send, Data} ->
+	    {udp, Sock, Host, Port} = S#state.dst,
+	    send(Sock, Host, Port, Data),
+	    S1 = handle_next_chunk(S, next_chunk(S#state.src)),
+	    loop(S1)
     end.
