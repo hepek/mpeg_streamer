@@ -8,7 +8,7 @@
 
 -module(udp_streamer).
 %-compile(export_all).
--export([start_link/3, stop/1, init/3, drop_interval/2]).
+-export([start_link/3, stop/1, init/3]).
 
 -include("../include/mpegts.hrl").
 
@@ -42,49 +42,10 @@ stop(Pid) ->
 	    {ok, Reason}
     end.
 
-drop_interval(Pid, N) ->
-    Pid ! {self(), drop_interval, N},
-    Ref = monitor(process, Pid),
-
-    receive
-	{ok, N} ->
-	    demonitor(Ref, [flush]),
-	    {ok, normal};
-	{'DOWN', Ref, process, Pid, Reason} ->
-	    {ok, Reason}
-    end.
-
 init(ReportTo, SrcUri, DstUri) ->
     Src = get_src(SrcUri),
     Dst = get_dst(DstUri),
     loop(#state{src=Src, dst=Dst, tprev=now(), ping_pid=ReportTo}).
-
-drop(_, infinity) ->
-    false;
-drop(Cnt, {sections, Interval, Count})
-  when (Cnt rem Interval) < Count ->
-    true;
-drop(Cnt, {drop_burst, Interval, Freq, Count}) 
-  when (Cnt rem Interval) < Count, (((Cnt - (Cnt rem Interval)) rem Freq) =:= 0) ->
-    true;
-drop(Cnt, Interval) when (Cnt rem Interval) =:= 0 ->
-    true;
-drop(_, _) ->
-    false.
-
-burst(Cnt, {burst, Interval, Count}) 
-    when ((Cnt rem Interval) < Count) ->
-    true;    
-burst(_, _) ->
-    false.
-
-sleep_burst(Cnt, {sleep, Ms, Interval}) 
-  when (Cnt rem Interval) =:= 0 ->
-    io:format("sleeping"),
-    timer:sleep(Ms);
-sleep_burst(_, _) ->
-    ok.
-
 
 get_dst(DstUri) ->
     case uri_utils:parse(DstUri) of
@@ -156,7 +117,6 @@ send(Sock, Host, Port, Out) ->
 dispatch(S, Packets) ->    
     PCR = getPCR(Packets),
     NPackets  = S#state.pkt_count,
-    sleep_burst(NPackets, DropBurst),
     {Sleep, S1} = wait(PCR, now(), S),
     Out = [ts_packet:encode(P) || P <- Packets],
     timer:send_after(Sleep, {send, Out}),
@@ -166,16 +126,13 @@ dispatch(S, Packets) ->
 handle_next_chunk(S, eof) ->
     io:format("eof~n"),
     {ok, _} = file:position(element(2,S#state.src), {bof, 0}),
-    S;
+    handle_next_chunk(S, next_chunk(S#state.src));
 handle_next_chunk(S, {ok, Data}) ->
     Packets = ts_packet:decode_data(Data),
     dispatch(S, Packets).
 
 loop(S) ->
     receive
-	{Pid, drop_interval, N} ->
-	    Pid ! {ok, N},
-	    loop(S#state{drop_interval = N});
 	{Pid, stop} ->
 	    %% todo: change to smth more general
 	    file:close(element(2, S#state.src)),

@@ -106,21 +106,16 @@ decode_PAT(<<_PF:8, 0:8, 1:1, 0:1, 2#11:2, 0:2,
 	     SectionNo:8, LastSectionNo:8,
 	     Rest/binary>>) ->
     ProgLen = SectionLength-9,
-    <<Data:ProgLen/binary,
-      _CRC:32, %TODO: check CRC
-      _/binary>> = Rest,
+    <<Data:ProgLen/binary, _CRC:32, _/binary>> = Rest,
     Programs = [{ProgramNum, PID} || <<ProgramNum:16, _Res:3, PID:13>> <= Data],
     {pat, {VersionNo, CurrNext, SectionNo, LastSectionNo}, Programs}.
 
-decode_PMT(<<0:8, 2:8, _SS:1, 0:1, _:2, 0:2, Len:10,
-	    Rest:Len/binary, _/binary>>) ->
+decode_PMT(<<0:8, 2:8, SS:1, 0:1, XX:2, 0:2, Len:10,
+	     Rest:Len/binary, _/binary>>) ->
+    %%0 = crc:crc(<<0:8, 2:8, SS:1, 0:1, XX:2, 0:2, Len:10, Rest:Len/binary>>),
     SL = Len-4,
     <<Strip:SL/binary, _CRC32:32/big-integer>> = Rest,
-    <<ProgramNum:16,
-      _:2, _Ver:5,
-      _CN:1, 0:8, 0:8, _:3,
-      PCRPID:13, _:4, 0:2, PIL:10, _PI:PIL/binary,
-      Progs/binary>> = Strip,
+    <<ProgramNum:16, _:2, _Ver:5, _CN:1, 0:8, 0:8, _:3, PCRPID:13, _:4, 0:2, PIL:10, _PI:PIL/binary, Progs/binary>> = Strip,
     {pmt, ProgramNum, PCRPID,
      [{Stype, EPID, ESL, Desc} ||
 	 <<Stype:8, _:3, EPID:13, _:4, 0:2, ESL:10, Desc:ESL/binary>> <= Progs]}.
@@ -171,10 +166,10 @@ decode_ad(<<Discont:1,
     Flags = {Discont, RandAcc, Priority,
 	     PCRFlag, OPCRFlag, Splice,
 	     TPData, AdaptFieldExtension},
-
-    {PCR, Rest1}    = get_PCR(Rest, PCRFlag),
+    
+    {PCR, Rest1}    = get_PCR(Rest,  PCRFlag),
     {OPCR, Rest2}   = get_PCR(Rest1, OPCRFlag),
     SpliceCountdown = get_Splice(Rest2, Splice),
-
+    
     #ad{flags = Flags, pcr = PCR, opcr = OPCR, 
 	splice_countdown = SpliceCountdown}.
