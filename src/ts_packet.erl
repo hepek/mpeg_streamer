@@ -125,6 +125,27 @@ decode_PMT(<<0:8, 2:8, _SS:1, 0:1, _:2, 0:2, Len:10,
      [{Stype, EPID, ESL, Desc} ||
 	 <<Stype:8, _:3, EPID:13, _:4, 0:2, ESL:10, Desc:ESL/binary>> <= Progs]}.
 
+append_PMT(<<0:8, 2:8, SS:1, 0:1, 2#11:2, 0:2, Len:10,
+	    Rest:Len/binary, RestRest/binary>>, {AStype, AEPID, AESL, ADESC}) ->
+    SL = Len-4,
+    <<Strip:SL/binary, CRC32:32/big-integer>> = Rest,
+    <<ProgramNum:16,
+      _:2, Ver:5,
+      CN:1, 0:8, 0:8, _:3,
+      PCRPID:13, _:4, 0:2, PIL:10, PI:PIL/binary,
+      Progs/binary>> = Strip,
+	  Appendix = <<AStype:8, 2#11:3, AEPID:13, 0:4, 0:2, AESL:10, ADESC:AESL/binary>>,
+	  Len2 = Len + byte_size(Appendix),
+	  OutH = <<2:8, SS:1, 0:1, 2#11:2, 0:2, Len2:10>>,
+	  OutH2 = <<ProgramNum:16, 0:2, Ver:5, CN:1, 0:8, 0:8, 0:3,
+				PCRPID:13, 0:4, 0:2, PIL:10, PI:PIL/binary>>,
+	  OutB = <<Progs/binary, Appendix/binary>>,
+	  Fill = binary:part(RestRest, {byte_size(Appendix), byte_size(RestRest)-byte_size(Appendix)}),
+	  %% TODO: calculate CRC
+	  Data = <<OutH/binary, OutH2/binary, OutB/binary>>,
+	  CRC32New = crc:crc(Data),
+	  <<0:8, Data/binary, CRC32New/binary, Fill/binary>>.
+
 get_PCR(Data, 1) ->
     <<PCR:33/integer-big, _Pad:6, _Ex:9, Rest/binary>> = Data,	    
     {PCR, Rest};
