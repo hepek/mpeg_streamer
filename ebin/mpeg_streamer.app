@@ -1,0 +1,10 @@
+{application,mpeg_streamer,
+             [{description,[]},
+              {vsn,"1"},
+              {registered,[]},
+              {applications,[kernel,stdlib]},
+              {mod,{mpeg_streamer_app,[]}},
+              {env,[]},
+              {modules,[mpeg_streamer_app,mpeg_streamer_server,
+                        mpeg_streamer_sup,stream_info,
+                        ts_packet,udp_streamer,uri_utils]}]}.

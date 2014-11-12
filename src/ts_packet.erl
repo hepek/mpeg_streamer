@@ -3,8 +3,6 @@
 %%% @doc
 %%% ts_packet decodes mpeg-ts packets
 %%% @end
-%%% Created : 27 Dec 2013 by  <milan@epikur>
-%%% Note:
 
 -module(ts_packet).
 -compile(export_all).
@@ -33,7 +31,7 @@ decode_data(BinData) ->
 resync(_Data, Max, Max) -> error({sync_byte_not_found, Max});
 resync(<<>>, _, _)      -> <<>>;
 resync(Data, Counter, Max) ->
-    io:format("junk on input, resynchronizing stream~n"),
+    warning_msg("junk on input, resynchronizing stream~n"),
     <<_Skip:8, Data2/binary>> = Data,
     <<Syn:8, _/binary>> = Data2,
     case Syn of
@@ -110,20 +108,32 @@ decode_PAT(<<_PF:8, 0:8, 1:1, 0:1, 2#11:2, 0:2,
     Programs = [{ProgramNum, PID} || <<ProgramNum:16, _Res:3, PID:13>> <= Data],
     {pat, {VersionNo, CurrNext, SectionNo, LastSectionNo}, Programs}.
 
-decode_PMT(<<0:8, 2:8, SS:1, 0:1, XX:2, 0:2, Len:10,
-	     Rest:Len/binary, _/binary>>) ->
-    %%0 = crc:crc(<<0:8, 2:8, SS:1, 0:1, XX:2, 0:2, Len:10, Rest:Len/binary>>),
-    SL = Len-4,
-    <<Strip:SL/binary, _CRC32:32/big-integer>> = Rest,
-    <<ProgramNum:16, _:2, _Ver:5, _CN:1, 0:8, 0:8, _:3, PCRPID:13, _:4, 0:2, PIL:10, _PI:PIL/binary, Progs/binary>> = Strip,
-    {pmt, ProgramNum, PCRPID,
-     [{Stype, EPID, ESL, Desc} ||
-	 <<Stype:8, _:3, EPID:13, _:4, 0:2, ESL:10, Desc:ESL/binary>> <= Progs]}.
+decode_PMT(<<0:8, 2:8, SS:1, 0:1, XX:2, 0:2, Len:10, Rest:Len/binary, _/binary>>) ->
+    case crc:crc(<<2:8, SS:1, 0:1, XX:2, 0:2, Len:10, Rest:Len/binary>>) of
+	0 -> SL = Len-4,
+	     <<Strip:SL/binary, _CRC32:32/big-integer>> = Rest,
+	     <<ProgramNum:16, _:2, _Ver:5, _CN:1, 0:8, 0:8, _:3, PCRPID:13, _:4, 0:2, PIL:10, _PI:PIL/binary, Progs/binary>> = Strip,
+	     {pmt, ProgramNum, PCRPID,
+	      [{Stype, EPID, ESL, Desc} ||
+		  <<Stype:8, _:3, EPID:13, _:4, 0:2, ESL:10, Desc:ESL/binary>> <= Progs]};
+	N -> {error, bad_checksum, N}
+    end.
+%%
+%%decode_PMT(<<0:8, 2:8, SS:1, 0:1, XX:2, 0:2, Len:10,
+%%	     Rest:Len/binary, _/binary>>) ->
+%%    %%0 = crc:crc(<<0:8, 2:8, SS:1, 0:1, XX:2, 0:2, Len:10, Rest:Len/binary>>),
+%%    SL = Len-4,
+%%    <<Strip:SL/binary, _CRC32:32/big-integer>> = Rest,
+%%    <<ProgramNum:16, _:2, _Ver:5, _CN:1, 0:8, 0:8, _:3, PCRPID:13, _:4, 0:2, PIL:10, _PI:PIL/binary, Progs/binary>> = Strip,
+%%    {pmt, ProgramNum, PCRPID,
+%%     [{Stype, EPID, ESL, Desc} ||
+%%	 <<Stype:8, _:3, EPID:13, _:4, 0:2, ESL:10, Desc:ESL/binary>> <= Progs]}.
+
 
 append_PMT(<<0:8, 2:8, SS:1, 0:1, 2#11:2, 0:2, Len:10,
 	    Rest:Len/binary, RestRest/binary>>, {AStype, AEPID, AESL, ADESC}) ->
     SL = Len-4,
-    <<Strip:SL/binary, CRC32:32/big-integer>> = Rest,
+    <<Strip:SL/binary, _CRC32:32/big-integer>> = Rest,
     <<ProgramNum:16,
       _:2, Ver:5,
       CN:1, 0:8, 0:8, _:3,
@@ -136,7 +146,6 @@ append_PMT(<<0:8, 2:8, SS:1, 0:1, 2#11:2, 0:2, Len:10,
 				PCRPID:13, 0:4, 0:2, PIL:10, PI:PIL/binary>>,
 	  OutB = <<Progs/binary, Appendix/binary>>,
 	  Fill = binary:part(RestRest, {byte_size(Appendix), byte_size(RestRest)-byte_size(Appendix)}),
-	  %% TODO: calculate CRC
 	  Data = <<OutH/binary, OutH2/binary, OutB/binary>>,
 	  CRC32New = crc:crc(Data),
 	  <<0:8, Data/binary, CRC32New/binary, Fill/binary>>.

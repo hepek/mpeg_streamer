@@ -3,8 +3,6 @@
 %%% @doc
 %%% udp_streamer streams mpeg-ts packets over udp bcast
 %%% @end
-%%% Created : 02 Jan 2014 by  <zivotinja@gmail.com>
-%%% Note:
 
 -module(udp_streamer).
 %-compile(export_all).
@@ -45,6 +43,7 @@ stop(Pid) ->
 init(ReportTo, SrcUri, DstUri) ->
     Src = get_src(SrcUri),
     Dst = get_dst(DstUri),
+    timer:send_after(10, {send, <<>>}), %% play
     loop(#state{src=Src, dst=Dst, tprev=now(), ping_pid=ReportTo}).
 
 get_dst(DstUri) ->
@@ -90,10 +89,9 @@ ping(_,_,_) ->
     ok.
 
 to_wait(T) when (T >= 0) ->
-    io:format("~p,", [T]),
-    T; %timer:sleep(T);
+    T;
 to_wait(T) ->
-    io:format("running late ~p~n", [T]),
+    warning_msg("running late ~p~n", [T]),
     0.
 
 wait(none, Time, S) ->
@@ -109,7 +107,7 @@ send(Sock, Host, Port, Out) ->
     case gen_udp:send(Sock, Host, Port, Out) of
 	ok -> ok;
 	{error, eagain} -> 
-	    io:format(":"),
+	    info_msg(":"),
 	    timer:sleep(100),
 	    send(Sock, Host, Port, Out)
     end.
@@ -124,7 +122,7 @@ dispatch(S, Packets) ->
     S1#state{pkt_count = NPackets + 1}.
 
 handle_next_chunk(S, eof) ->
-    io:format("eof~n"),
+    info_msg("eof~n"),
     {ok, _} = file:position(element(2,S#state.src), {bof, 0}),
     handle_next_chunk(S, next_chunk(S#state.src));
 handle_next_chunk(S, {ok, Data}) ->
@@ -137,7 +135,7 @@ loop(S) ->
 	    %% todo: change to smth more general
 	    file:close(element(2, S#state.src)),
 	    gen_udp:close(element(2,S#state.dst)),
-	    io:format("closing~n"),
+	    info_msg("closing~n"),
 	    Pid ! stop;
 	{send, Data} ->
 	    {udp, Sock, Host, Port} = S#state.dst,

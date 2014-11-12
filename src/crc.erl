@@ -54,4 +54,4 @@ crc(<<F:8,Rem/binary>>, CRC) ->
     crc(Rem, element((N bxor F) + 1, ?CRC) bxor (CRC bsr 8));
 crc(<<>>, LCRC) ->
     <<CRC:32/little>> = <<LCRC:32>>, 
-    <<CRC:32>>.
+    CRC.

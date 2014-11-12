@@ -11,7 +11,12 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, 
+	 info/1,
+	 shutdown/0,
+	 start_streamer/2,
+	 stop_streamer/1,
+	 list_streamers/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -19,110 +24,70 @@
 
 -define(SERVER, ?MODULE). 
 
--record(state, {streamers=[]}).
-
-%%%===================================================================
-%%% API
-%%%===================================================================
+-record(state, {streamers=[],
+	        nextId = 0}).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-%%%===================================================================
-%%% gen_server callbacks
-%%%===================================================================
+%% API
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Initializes the server
-%%
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
-%% @end
-%%--------------------------------------------------------------------
+info(MediaSourceURL) ->
+    gen_server:call(?SERVER, {info, MediaSourceURL}).
+
+shutdown() ->
+    gen_server:cast(?SERVER, stop).
+
+start_streamer(MediaSourceURL, DestinationURL) ->
+    gen_server:call(?SERVER, {start_stream, MediaSourceURL, DestinationURL}).
+
+stop_streamer(ID) ->
+    gen_server:call(?SERVER, {stop_stream, ID}).
+
+list_streamers() ->
+    gen_server:call(?SERVER, list_streamers).
+
+%% Gen Server API
+
 init([]) ->
     {ok, #state{}}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling call messages
-%%
-%% @spec handle_call(Request, From, State) ->
-%%                                   {reply, Reply, State} |
-%%                                   {reply, Reply, State, Timeout} |
-%%                                   {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, Reply, State} |
-%%                                   {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
+handle_call(list_streamers, _From, State) ->
+    {reply, State#state.streamers, State};
+
+handle_call({start_stream, SRC, DST}, _From, State) ->
+    Pid = spawn(udp_streamer, init, [0, SRC, DST]),
+    Id = State#state.nextId,
+    Streamers = [{Id, Pid, SRC, DST} | State#state.streamers],
+    {reply, Id, State#state{streamers=Streamers, nextId=Id+1}};
+
+handle_call({stop_stream, ID}, _From, State) ->
+    case lists:keytake(ID, 1, State#state.streamers) of
+	false ->
+	    {reply, no_such_stream, State};
+	{value, {_, Pid, _, _}, Streamers2} ->
+	    {ok, _} = udp_streamer:stop(Pid),
+	    {reply, ok, State#state{streamers=Streamers2}}
+    end;
 handle_call({info, Source}, _From, State) ->   
     case (catch stream_info:info(Source)) of
-	{'EXIT', Reason} -> 
-	    io:format("~w~n", [Reason]),
+	{'EXIT', Reason} ->
 	    {reply, {error, Reason}, State};
 	Info                -> 
 	    {reply, Info, State}
     end.
-%handle_call({start, Source, Destination}, _From, State) ->
-%    mpeg_streamer:
-%end.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling cast messages
-%%
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
-%%                                  {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 handle_cast(stop, State) ->
     {stop, normal, State};
 handle_cast(Msg, State) ->
-    io:format("Unexpected ~p~n", Msg),
+    warning_msg("Unexpected message ~p~n", Msg),
     {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 handle_info(_Info, State) ->
     {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
 terminate(_Reason, _State) ->
     ok.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @end
-%%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
