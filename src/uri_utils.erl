@@ -47,9 +47,9 @@ open(URI) ->
     end.
 
 get_opts(Addr = {A, _, _, _}) when (A >= 224 andalso A =< 239) ->
-    io:format("multicast"),
     [binary, {active, false}, 
      {add_membership, {Addr, {0,0,0,0}}},
-     {multicast_ttl, 2}];
+     {multicast_ttl, 2},
+     {reuseaddr, true}];
 get_opts(_) ->
     [binary, {active, false}].

@@ -31,7 +31,7 @@ decode_data(BinData) ->
 resync(_Data, Max, Max) -> error({sync_byte_not_found, Max});
 resync(<<>>, _, _)      -> <<>>;
 resync(Data, Counter, Max) ->
-    warning_msg("junk on input, resynchronizing stream~n"),
+    error_logger:warning_msg("junk on input, resynchronizing stream~n"),
     <<_Skip:8, Data2/binary>> = Data,
     <<Syn:8, _/binary>> = Data2,
     case Syn of

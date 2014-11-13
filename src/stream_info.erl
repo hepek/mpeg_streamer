@@ -46,18 +46,18 @@ udp_info(URI, NumPackets) ->
     {udp, S} = uri_utils:open(URI),
     D = receive_udp(S, NumPackets*?TSLEN),
     gen_udp:close(S),
-    {ok, Data} = D,
-    Packets = lists:flatmap(fun ts_packet:decode_data/1, Data),
+    Packets = lists:flatmap(fun ts_packet:decode_data/1, D),
     packets_info(Packets).
 
 receive_udp(_, More) when (More =< 0) ->
-    {ok, []};
+    [];
 receive_udp(Sock, More) ->
     case gen_udp:recv(Sock, 0, 2000) of	
 	{ok, {_, _, Data}} ->
-	    {ok, [Data | receive_udp(Sock, More-byte_size(Data))]};
+	    [Data | receive_udp(Sock, More-byte_size(Data))];
 	{error, Reason} ->
-	    {error, Reason}
+	    error_logger:error_msg("receive_udp: ~p~n", [{error, Reason}]),
+	    []
     end.
 
 prog_pcr(Info) ->

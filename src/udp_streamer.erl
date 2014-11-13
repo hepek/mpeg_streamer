@@ -6,7 +6,7 @@
 
 -module(udp_streamer).
 %-compile(export_all).
--export([start_link/3, stop/1, init/3]).
+-export([start_link/3, stop/1, init/4]).
 
 -include("../include/mpegts.hrl").
 
@@ -40,11 +40,20 @@ stop(Pid) ->
 	    {ok, Reason}
     end.
 
-init(ReportTo, SrcUri, DstUri) ->
-    Src = get_src(SrcUri),
-    Dst = get_dst(DstUri),
-    timer:send_after(10, {send, <<>>}), %% play
-    loop(#state{src=Src, dst=Dst, tprev=now(), ping_pid=ReportTo}).
+init(ReportTo, Ref, SrcUri, DstUri) ->
+    case (catch begin
+		   S = get_src(SrcUri),
+		   D = {udp, _, _, _} = get_dst(DstUri),
+		   timer:send_after(10, {send, <<>>}), %% play
+		   {ok, S, D}
+	       end)
+    of
+	{ok, Src, Dst} ->
+	    ReportTo ! {Ref, ok},
+	    loop(#state{src=Src, dst=Dst, tprev=now(), ping_pid=ReportTo});
+	Err ->
+	    ReportTo ! {Ref, Err}
+    end.
 
 get_dst(DstUri) ->
     case uri_utils:parse(DstUri) of
@@ -91,7 +100,7 @@ ping(_,_,_) ->
 to_wait(T) when (T >= 0) ->
     T;
 to_wait(T) ->
-    warning_msg("running late ~p~n", [T]),
+    error_logger:warning_msg("running late ~p~n", [T]),
     0.
 
 wait(none, Time, S) ->
@@ -107,7 +116,7 @@ send(Sock, Host, Port, Out) ->
     case gen_udp:send(Sock, Host, Port, Out) of
 	ok -> ok;
 	{error, eagain} -> 
-	    info_msg(":"),
+	    error_logger:info_msg(":"),
 	    timer:sleep(100),
 	    send(Sock, Host, Port, Out)
     end.
@@ -122,9 +131,10 @@ dispatch(S, Packets) ->
     S1#state{pkt_count = NPackets + 1}.
 
 handle_next_chunk(S, eof) ->
-    info_msg("eof~n"),
+    error_logger:info_msg("eof~n"),
     {ok, _} = file:position(element(2,S#state.src), {bof, 0}),
-    handle_next_chunk(S, next_chunk(S#state.src));
+    S1 = S#state{tprev = now(), pcr_last = undefined},
+    handle_next_chunk(S1, next_chunk(S#state.src));
 handle_next_chunk(S, {ok, Data}) ->
     Packets = ts_packet:decode_data(Data),
     dispatch(S, Packets).
@@ -135,7 +145,7 @@ loop(S) ->
 	    %% todo: change to smth more general
 	    file:close(element(2, S#state.src)),
 	    gen_udp:close(element(2,S#state.dst)),
-	    info_msg("closing~n"),
+	    error_logger:info_msg("closing~n"),
 	    Pid ! stop;
 	{send, Data} ->
 	    {udp, Sock, Host, Port} = S#state.dst,

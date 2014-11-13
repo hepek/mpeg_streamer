@@ -56,10 +56,18 @@ handle_call(list_streamers, _From, State) ->
     {reply, State#state.streamers, State};
 
 handle_call({start_stream, SRC, DST}, _From, State) ->
-    Pid = spawn(udp_streamer, init, [0, SRC, DST]),
-    Id = State#state.nextId,
-    Streamers = [{Id, Pid, SRC, DST} | State#state.streamers],
-    {reply, Id, State#state{streamers=Streamers, nextId=Id+1}};
+    Pid = spawn(udp_streamer, init, [self(), make_ref(), SRC, DST]),
+    receive
+	{Ref, ok} ->
+	    Id = State#state.nextId,
+	    Streamers = [{Id, Pid, SRC, DST} | State#state.streamers],
+	    {reply, Id, State#state{streamers=Streamers, nextId=Id+1}};
+	{Ref, Error} ->
+	    error_logger:error_msg("start_stream: error: ~p~n", [Error]),
+	    {reply, {error, Error}, State}
+    after 5000 ->
+	    {reply, timeout, State}
+    end;
 
 handle_call({stop_stream, ID}, _From, State) ->
     case lists:keytake(ID, 1, State#state.streamers) of
@@ -80,7 +88,7 @@ handle_call({info, Source}, _From, State) ->
 handle_cast(stop, State) ->
     {stop, normal, State};
 handle_cast(Msg, State) ->
-    warning_msg("Unexpected message ~p~n", Msg),
+    error_logger:warning_msg("Unexpected message ~p~n", Msg),
     {noreply, State}.
 
 handle_info(_Info, State) ->
