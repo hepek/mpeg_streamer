@@ -35,7 +35,7 @@ erl -pa ebin
 % Check what is currently being streamed
 
 3> mpeg_streamer_server:list_streamers().
-[{2,<0.1085.0>,"file:///tmp/myvideo.mpg",
+[{0,<0.1085.0>,"file:///tmp/myvideo.mpg",
   "udp://239.0.0.1:1234"}]
 
 % Let's see what's in the files and streams
