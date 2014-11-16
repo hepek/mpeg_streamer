@@ -20,18 +20,20 @@ Compile the package by calling
 
 Run application mpeg_streamer
 
-```erl -pa ebin
+```
+
+erl -pa ebin
 
 1> application:start(mpeg_streamer).
-```
 
-Stream a file from disk via UDP multicast
 
-```
+% Stream a file from disk via UDP multicast
+
 2> mpeg_streamer_server:start_streamer("file:///tmp/myvideo.mpg", "udp://239.0.0.1:1234").
 0
 
 % Check what is currently being streamed
+
 3> mpeg_streamer_server:list_streamers().
 [{2,<0.1085.0>,"file:///tmp/myvideo.mpg",
   "udp://239.0.0.1:1234"}]
@@ -47,6 +49,7 @@ Stream a file from disk via UDP multicast
           [{33,h264_video}]}]
 
 % Wow, looks like we're streaming, allright.
+
 ```
 
 Check out the file in VLC, for instance.
