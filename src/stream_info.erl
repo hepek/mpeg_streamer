@@ -124,12 +124,13 @@ framerate(_) -> 0.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % h264 info
-
 h264info(Data) ->    
     case binary:match(Data, <<0,0,1,16#67>>) of
-	{Fro, _} ->
-	    SPSData = binary:part(Data, {Fro+4, 120}),
-	    parseSPS(SPSData);
+	{_Fro, _} ->
+	    %ChunkLen = min(120, byte_size(Data)-4-Fro),
+	    %SPSData = binary:part(Data, {Fro+4, ChunkLen}),
+	    %SPS = parseSPS(SPSData),
+	    {h264_video, 'TODO:parse SPS'};
 	nomatch ->
 	    h264_video
     end.
@@ -196,7 +197,7 @@ parseSPS(<<PROFILE_IDC:8, CS0:1, CS1:1, CS2:1, CS3:1, CS4:1, 0:3, LEVEL_IDC:8, R
 		constraint_set4_flag = CS4,
 		level_idc            = LEVEL_IDC, 
 		seq_param_set_id     = SEQ_PARAMETER_SET_ID},
-    sps1(SPS0, Rest2).	      
+    sps1(SPS0, Rest2).
 
 sps1(SPS0, <<Data/bitstring>>) ->
     [LOG2_MAX_FRAME_NUM_MINUS4,
