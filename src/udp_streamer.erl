@@ -112,13 +112,19 @@ wait(PCR, Time, S = #state{tprev = Tprev, pcr_last = PCRlast}) ->
     ToWait = to_wait((PCR-PCRlast) div 90) - (Tdiff div 1000),
     {ToWait, S#state{tprev = Time, pcr_last = PCR}}.
 
+
 send(Sock, Host, Port, Out) ->
+    send(Sock, Host, Port, Out, 30).
+
+send(_, _, _, _, 0) ->
+    error(socket_closed);
+send(Sock, Host, Port, Out, Retries) ->
     case gen_udp:send(Sock, Host, Port, Out) of
 	ok -> ok;
 	{error, eagain} -> 
 	    error_logger:info_msg(":"),
 	    timer:sleep(100),
-	    send(Sock, Host, Port, Out)
+	    send(Sock, Host, Port, Out, Retries-1)
     end.
 
 dispatch(S, Packets) ->    

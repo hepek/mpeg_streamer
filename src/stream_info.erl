@@ -14,7 +14,7 @@
 -include("../include/mpegts.hrl").
 
 info(URI) ->
-    info(URI, 1024).
+    info(URI, 512).
 
 info(URI, NumPackets) ->
     case uri_utils:parse(URI) of
@@ -49,14 +49,28 @@ udp_info(URI, NumPackets) ->
     Packets = lists:flatmap(fun ts_packet:decode_data/1, D),
     packets_info(Packets).
 
+udp_str_info(URI, NumPackets) ->
+    {udp, S} = uri_utils:open(URI),
+    T0 = now(),
+    D = receive_udp(S, NumPackets*?TSLEN),
+    T1 = now(),
+    ElapsedSeconds = timer:now_diff(T1, T0),
+    BitPerSec = 8*NumPackets*?TSLEN*1000000.0/ElapsedSeconds,
+    gen_udp:close(S),
+
+    case D of
+	[] -> no_stream;
+	Dat -> Packets = lists:flatmap(fun ts_packet:decode_data/1, Dat),
+	       {{kbps, round(BitPerSec/1000)}, packets_info(Packets)}
+    end.
+
 receive_udp(_, More) when (More =< 0) ->
     [];
 receive_udp(Sock, More) ->
-    case gen_udp:recv(Sock, 0, 2000) of	
+    case gen_udp:recv(Sock, 0, 200) of	
 	{ok, {_, _, Data}} ->
 	    [Data | receive_udp(Sock, More-byte_size(Data))];
 	{error, Reason} ->
-	    error_logger:error_msg("receive_udp: ~p~n", [{error, Reason}]),
 	    []
     end.
 
