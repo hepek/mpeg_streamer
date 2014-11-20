@@ -14,12 +14,16 @@ scanSeq(IPSpec, PortSpec) ->
     Res = [report(IP, PORT) || IP <- IPS, PORT <- Ports],
     lists:filter(fun (X) -> not (X =:= no_stream) end, Res).
 
-scanParallel(IPSpec, PortSpec) ->
+scanParallel(Confs) ->
+    loop(#state{inProgress = init(Confs)}).
+
+scan(IPSpec, PortSpec) ->
     IPS = expandIPs(IPSpec),
     Ports = expandPorts(PortSpec),
     Confs = [{IP, PORT} || IP <- IPS, PORT <- Ports],
     error_logger:info_msg("Scanning ~p addresses~n", [length(Confs)]),
-    loop(#state{inProgress = init(Confs)}).
+    Chunks = ms_list:chunk(Confs, 1000),
+    lists:flatmap(fun scanParallel/1, Chunks).
 
 init(X) ->
     init(X, gb_sets:new()).
